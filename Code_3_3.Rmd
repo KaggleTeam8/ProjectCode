@@ -1,0 +1,193 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+
+# Load required libraries
+library(tidyverse)
+library(tidymodels)
+library(plotly)
+library(skimr)
+library(caret)
+
+```
+
+```{r}
+
+dfAirBnBTrain <- read_csv("data/airbnbTrain.csv")
+dfAirBnBTest <- read_csv("data/airbnbTest.csv")
+
+```
+
+```{r}
+
+dfAirBnBTrain$amenities <- lapply(strsplit(as.character(dfAirBnBTrain$amenities),split=','),trimws)
+
+dfAirBnBTrain <-
+  dfAirBnBTrain %>% 
+  mutate(no_of_amenities=lengths(amenities))
+
+head(dfAirBnBTrain$no_of_amenities)
+
+```
+
+```{r}
+
+dfAirBnBTest$amenities <- lapply(strsplit(as.character(dfAirBnBTest$amenities),split=','),trimws)
+
+dfAirBnBTest <-
+  dfAirBnBTest %>% 
+  mutate(no_of_amenities=lengths(amenities))
+
+head(dfAirBnBTest)
+```
+
+
+```{r}
+
+dfAirBnBTrain <-
+  dfAirBnBTrain %>% 
+    drop_na(host_is_superhost,bathrooms,beds)
+```
+
+```{r}
+
+skim(dfAirBnBTrain)
+```
+
+```{r}
+
+reqdTrain <- as.vector(c("id","high_booking_rate","no_of_amenities","availability_30","bathrooms","beds","cancellation_policy","extra_people","host_identity_verified","host_is_superhost","host_response_time","instant_bookable","minimum_nights","price","requires_license","room_type"))
+
+reqdTest <- as.vector(c("id","no_of_amenities","availability_30","bathrooms","beds","cancellation_policy","extra_people","host_identity_verified","host_is_superhost","host_response_time","instant_bookable","minimum_nights","price","requires_license","room_type"))
+
+```
+
+```{r}
+
+dfFinalTrain <- dfAirBnBTrain[,reqdTrain] 
+
+dfFinalTest <- dfAirBnBTest[,reqdTest]
+
+```
+
+```{r}
+
+str(dfFinalTest)
+
+```
+```{r}
+dfFinalTest <- mutate(dfFinalTest, host_response_time = ifelse(exists('host_response_time')==TRUE,host_response_time,'N/A'))
+dfFinalTest <- mutate(dfFinalTest, host_identity_verified = ifelse(exists('host_identity_verified')==TRUE,host_identity_verified,FALSE))
+dfFinalTest <- mutate(dfFinalTest, host_is_superhost = ifelse(exists('host_is_superhost')==TRUE,host_is_superhost,FALSE))
+
+dfFinalTest <- mutate(dfFinalTest, bathrooms = ifelse(exists('bathrooms')==TRUE,bathrooms,1))
+dfFinalTest <- mutate(dfFinalTest, beds = ifelse(exists('beds')==TRUE,beds,2))
+```
+
+```{r}
+skim(dfFinalTrain)
+```
+
+
+```{r}
+skim(dfFinalTest)
+```
+
+```{r}
+dfFinalTrain$price <- as.numeric(gsub('\\$|,','', dfFinalTrain$price))
+dfFinalTrain$extra_people <- as.numeric(gsub('\\$|,','', dfFinalTrain$extra_people))
+dfFinalTest$price <- as.numeric(gsub('\\$|,','', dfFinalTest$price))
+dfFinalTest$extra_people<- as.numeric(gsub('\\$|,','', dfFinalTest$extra_people))
+
+dfFinalTrain$no_of_amenities <- as.numeric(dfFinalTrain$no_of_amenities)
+dfFinalTest$no_of_amenities <- as.numeric(dfFinalTest$no_of_amenities)
+```
+
+```{r}
+
+colsToFactorTrain <-
+  c('high_booking_rate', 'cancellation_policy', 'instant_bookable','host_identity_verified','host_is_superhost',"host_response_time","requires_license","room_type")
+
+colsToFactorTest <-
+  c('cancellation_policy', 'instant_bookable','host_identity_verified','host_is_superhost',"host_response_time","requires_license","room_type")
+```
+
+```{r}
+dfFinalTrain <-
+  dfFinalTrain %>% 
+   mutate_at(colsToFactorTrain, ~factor(.))
+
+dfFinalTest <-
+  dfFinalTest%>% 
+   mutate_at(colsToFactorTest, ~factor(.))
+```
+
+```{r}
+fitLogistic <- glm(formula = high_booking_rate ~ .-id, data = dfFinalTrain, family = binomial)
+summary(fitLogistic)
+```
+
+```{r}
+car::vif(fitLogistic)
+```
+
+
+```{r}
+resultsLog <-
+  glm(formula = high_booking_rate ~ .-id, data = dfFinalTrain, family = binomial) %>%
+  predict(dfFinalTest, type='response') %>% 
+  bind_cols(dfFinalTest, predictedProb =.) %>% 
+  mutate(predictedClass = factor(ifelse(predictedProb >= 0.5,1,0)))
+
+resultsLog
+```
+
+```{r}
+
+modelKnnCaret <-
+  train(high_booking_rate ~ .-id, data = dfFinalTrain, preProcess=c("center","scale"),tuneLength = 10 ,method='knn',trControl=trainControl(method='cv', number=10))
+
+modelKnnCaret
+
+```
+
+```{r}
+model3 <- predict(modelKnnCaret, dfFinalTest, type = 'prob') %>%
+  bind_cols(dfFinalTest,PredictedProb =.$"1") %>% 
+  mutate(model = "Knn") 
+```
+
+
+
+```{r}
+
+uploadDf <-
+  resultsLog %>% 
+    select(predictedProb, id) %>% 
+    rename(high_booking_rate = predictedProb )
+```
+
+
+```{r}
+
+uploadDf %>%
+  write_csv("upload/KaggleComp_v3_Mar_4.csv")
+```
+
